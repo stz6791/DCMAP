@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaflet Map with Excel Data</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.1/MarkerCluster.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.1/MarkerCluster.Default.css">
+    <style>
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 75%;
+        }
+
+        #map {
+            height: 500px; /* Réduction de la hauteur de la carte */
+            margin-top: 0px; /* Décalage vers le bas de la carte */
+        }
+
+        .popup-container {
+            max-width: 300px;
+            text-align: center; /* Centrer le contenu */
+        }
+
+        .popup-header {
+            background-color: orange;
+            font-weight: bold;
+            padding: 8px;
+            border-bottom: 1px solid #ccc;
+            margin-bottom: 5px; /* Ajout d'un espace entre le titre et le reste du contenu */
+        }
+
+        .popup-content {
+            padding: 8px;
+        }
+
+        .country-label {
+            font-size: 12px;
+            font-weight: bold;
+            color: black;
+            background-color: rgba(255, 255, 255, 0.7);
+            padding: 2px 5px;
+            border-radius: 5px;
+        }
+
+        #siteDropdownContainer {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        #siteDropdown {
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        #resetButton {
+            font-size: 14px;
+        }
+
+        .supplier-logo {
+            max-width: 150px; /* Redimensionner le logo */
+            margin: 0 auto; /* Centrer l'image */
+            display: block;
+            margin-top: 0px; /* Ajouter de l'espace au-dessus du logo */
+            margin-bottom: 0px; /* Ajouter de l'espace en dessous du logo */
+        }
+    </style>
+
+
+
+<div id="map"></div>
+
+<div id="siteDropdownContainer">
+    <label for="siteDropdown" style="font-size: 14px;">Sélectionner le DataCenter à consulter :</label>
+    <select id="siteDropdown" style="font-size: 14px;">
+        <option value="">Sélectionner un site</option>
+    </select>
+    <button id="resetButton" style="font-size: 14px;">Remise de la carte à l'état initial</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.16.9/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.1/leaflet.markercluster.js"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        // Lire le fichier Excel
+        var url = 'https://plazza.orange.com/servlet/JiveServlet/downloadBody/2355579-102-64-7307864/DCMAP_V2.29_Test.xlsx';
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = 'arraybuffer';
+        xhr.onload = function (e) {
+            var data = new Uint8Array(xhr.response);
+            var workbook = XLSX.read(data, { type: 'array' });
+            var sheetName = workbook.SheetNames[0]; // Supposons que la feuille de calcul pertinente soit la première
+            var sheet = workbook.Sheets[sheetName];
+            var jsonData = XLSX.utils.sheet_to_json(sheet);
+
+            // Filtrer les données pour n'inclure que les sites avec la catégorie "Major" ou "Opportunistic"
+            var filteredData = jsonData.filter(function (entry) {
+                return entry.Category === "1 - Major" || entry.Category === "2 - Opportunistic";
+            });
+
+            // Initialisation de la carte Leaflet
+            var map = L.map('map').setView([20, 0], 2); // Centrer sur le monde entier
+
+            // Ajout de tuiles de carte Thunderforest Outdoors
+            L.tileLayer('https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=08d1750e24c34ba6bd41107543db481c', {
+                attribution: '&copy; <a href="https://tile.thunderforest.com/atlas/{z}/{x}/{y}.png?apikey=08d1750e24c34ba6bd41107543db481c'
+            }).addTo(map);
+
+            // Création d'un groupe de marqueurs
+            var markers = L.markerClusterGroup();
+
+            // Dropdown des sites
+            var siteDropdown = document.getElementById('siteDropdown');
+
+            // Fonction pour générer les options de la liste déroulante
+            function createSiteOptions(data) {
+                var options = '<option value="">Sélectionner un site</option>';
+                data.forEach(function (entry) {
+                    options += '<option value="' + entry["Supplier Site Code"] + '">' + entry["Supplier Site Code"] + '</option>';
+                });
+                return options;
+            }
+
+            // Rafraîchir le dropdown des sites avec les nouvelles options
+            siteDropdown.innerHTML = createSiteOptions(filteredData);
+
+            // Ajout de marqueurs à partir des données filtrées du fichier Excel
+            filteredData.forEach(function (entry) {
+                // Récupération du nom du fournisseur depuis la colonne "Supplier" de l'entrée
+                var supplierName = entry.Fournisseur;
+
+                // Appel de la fonction pour récupérer le logo du fournisseur
+                getSupplierLogo(supplierName, function (logoUrl) {
+                    // Construction du contenu du popup avec le nom du fournisseur et le reste des informations
+                    var popupContent = `
+                        <div class="popup-container">
+                            <div class="popup-header">${entry.Fournisseur}</div>
+                            <div class="popup-content">
+                                <b>Category:</b> ${entry.Category}<br>
+                                <b>Site Code:</b> ${entry["Supplier Site Code"]}<br>
+                                <b>Orange Site Code:</b> ${entry["Orange Site Code"]}<br>
+                                <b>Address:</b> ${entry.Address}<br>
+                                <b>Country / City:</b> ${entry["City / Country"]}<br>
+                                <b>Proximity:</b> <a href="${entry["Proximity Service Description"]}" target="_blank">Lien vers la fiche descriptive</a>
+                                ${logoUrl ? '<br><a href="https://' + supplierName.toLowerCase().replace(/\s/g, '') + '.com" target="_blank"><img src="' + logoUrl + '" alt="Logo du fournisseur" class="supplier-logo"></a>' : ''}
+                            </div>
+                        </div>
+                    `;
+                    var marker = L.marker([entry.Latitude, entry.Longitude]).bindPopup(popupContent);
+                    markers.addLayer(marker);
+                });
+            });
+
+            // Ajout du groupe de marqueurs à la carte
+            map.addLayer(markers);
+
+            // Écouter les changements de sélection dans le dropdown
+            siteDropdown.addEventListener('change', function (event) {
+                var selectedSiteCode = event.target.value;
+                if (selectedSiteCode) {
+                    var selectedMarker = markers.getLayers().find(function (marker) {
+                        var popup = marker.getPopup();
+                        if (popup) {
+                            var popupContent = popup.getContent();
+                            return popupContent.includes(selectedSiteCode);
+                        }
+                        return false;
+                    });
+
+                    if (selectedMarker) {
+                        selectedMarker.openPopup();
+                        map.setView(selectedMarker.getLatLng(), 15);
+                    }
+                }
+            });
+
+            // Bouton Reset
+            var resetButton = document.getElementById('resetButton');
+            resetButton.addEventListener('click', function () {
+                map.setView([20, 0], 2);
+            });
+
+            // Ajouter les noms des pays
+            fetch('https://unpkg.com/world-atlas/world/50m.json')
+                .then(response => response.json())
+                .then(data => {
+                    L.geoJSON(data, {
+                        onEachFeature: function (feature, layer) {
+                            if (feature.properties && feature.properties.name) {
+                                L.marker(layer.getBounds().getCenter(), {
+                                    icon: L.divIcon({
+                                        className: 'country-label',
+                                        html: feature.properties.name
+                                    })
+                                }).addTo(map);
+                            }
+                        }
+                    });
+                });
+        };
+        xhr.send();
+    });
+
+    // Fonction pour récupérer le logo du fournisseur
+    function getSupplierLogo(supplierName, callback) {
+        var url = 'https://logo.clearbit.com/' + supplierName.toLowerCase().replace(/\s/g, '') + '.com';
+        var img = new Image();
+        img.onload = function () {
+            callback(url); // Si l'image est chargée avec succès, retourne l'URL du logo
+        };
+        img.onerror = function () {
+            callback(null); // Si l'image n'est pas disponible, retourne null
+        };
+        img.src = url;
+    }
+</script>
+
